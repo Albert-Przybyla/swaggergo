@@ -7,6 +7,9 @@ type Route struct {
 	Path    string
 	Group   string
 	Handler string
+
+	QueryParams []string
+	BodyType    string
 }
 
 func parseRoutes(file *ast.File, groups map[string]string) []Route {
@@ -55,11 +58,23 @@ func parseRoutes(file *ast.File, groups map[string]string) []Route {
 			}
 		}
 
+		fn := findHandlerDecl(file, handler)
+
+		var queryParams []string
+		var bodyType string
+
+		if fn != nil {
+			queryParams = extractQueryParams(fn)
+			bodyType = extractBodyType(fn)
+		}
+
 		routes = append(routes, Route{
-			Method:  method,
-			Path:    trimQuotes(pathLit.Value),
-			Group:   groupPath,
-			Handler: handler,
+			Method:      method,
+			Path:        trimQuotes(pathLit.Value),
+			Group:       groupPath,
+			Handler:     handler,
+			QueryParams: queryParams,
+			BodyType:    bodyType,
 		})
 
 		return true

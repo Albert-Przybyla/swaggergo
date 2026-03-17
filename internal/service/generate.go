@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/Albert-Przybyla/swaggergo/internal/config"
 	"github.com/Albert-Przybyla/swaggergo/internal/generator"
@@ -125,13 +126,41 @@ func Generate(opts *GenerateOpts) error {
 				spec.Paths[fullPath] = item
 			}
 
+			opID := r.Handler
+			if opID == "" {
+				opID = r.Method + "_" + strings.ReplaceAll(fullPath, "/", "_")
+			}
+
 			op := &generator.Operation{
-				OperationID: r.Handler,
+				OperationID: opID,
 				Summary:     "",
 				Tags:        []string{r.Group},
 				Responses: map[string]generator.Response{
 					"200": {Description: "OK"},
 				},
+			}
+
+			for _, p := range extractPathParams(fullPath) {
+				op.Parameters = addParam(op.Parameters, p)
+			}
+
+			if r.BodyType != "" {
+				if _, exists := spec.Components.Schemas[r.BodyType]; !exists {
+					spec.Components.Schemas[r.BodyType] = &generator.Schema{
+						Type: "object",
+					}
+				}
+
+				op.RequestBody = &generator.RequestBody{
+					Required: true,
+					Content: map[string]generator.MediaType{
+						"application/json": {
+							Schema: &generator.Schema{
+								Ref: "#/components/schemas/" + r.BodyType,
+							},
+						},
+					},
+				}
 			}
 
 			switch r.Method {
@@ -179,4 +208,36 @@ func convertSchema(v interface{}) *generator.Schema {
 	return &generator.Schema{
 		Type: "object",
 	}
+}
+
+func extractPathParams(path string) []generator.Parameter {
+	var params []generator.Parameter
+
+	parts := strings.Split(path, "/")
+
+	for _, part := range parts {
+		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
+			name := part[1 : len(part)-1]
+
+			params = append(params, generator.Parameter{
+				Name:     name,
+				In:       "path",
+				Required: true,
+				Schema: &generator.Schema{
+					Type: "string",
+				},
+			})
+		}
+	}
+
+	return params
+}
+
+func addParam(params []generator.Parameter, p generator.Parameter) []generator.Parameter {
+	for _, existing := range params {
+		if existing.Name == p.Name && existing.In == p.In {
+			return params
+		}
+	}
+	return append(params, p)
 }
