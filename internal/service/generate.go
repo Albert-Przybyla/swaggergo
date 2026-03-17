@@ -6,6 +6,7 @@ import (
 
 	"github.com/Albert-Przybyla/swaggergo/internal/config"
 	"github.com/Albert-Przybyla/swaggergo/internal/generator"
+	ginparser "github.com/Albert-Przybyla/swaggergo/internal/parser/gin"
 )
 
 func Generate(opts *GenerateOpts) error {
@@ -104,17 +105,46 @@ func Generate(opts *GenerateOpts) error {
 			})
 		}
 
-		if routerCfg.BasePath != "" {
-			spec.Paths[routerCfg.BasePath+"/health"] = &generator.PathItem{
-				Get: &generator.Operation{
-					Summary:     "Health check",
-					Description: "Auto-generated placeholder endpoint",
-					Responses: map[string]generator.Response{
-						"200": {
-							Description: "OK",
-						},
-					},
+		parsed, err := ginparser.ParseFile(routerCfg.Source)
+		if err != nil {
+			return fmt.Errorf("failed to parse router file: %w", err)
+		}
+
+		for _, r := range parsed.Routes {
+			fullPath := ginparser.BuildFullPath(
+				routerCfg.BasePath,
+				r.Group,
+				r.Path,
+			)
+
+			fullPath = ginparser.NormalizePath(fullPath)
+
+			item := spec.Paths[fullPath]
+			if item == nil {
+				item = &generator.PathItem{}
+				spec.Paths[fullPath] = item
+			}
+
+			op := &generator.Operation{
+				OperationID: r.Handler,
+				Summary:     "",
+				Tags:        []string{r.Group},
+				Responses: map[string]generator.Response{
+					"200": {Description: "OK"},
 				},
+			}
+
+			switch r.Method {
+			case "GET":
+				item.Get = op
+			case "POST":
+				item.Post = op
+			case "PUT":
+				item.Put = op
+			case "PATCH":
+				item.Patch = op
+			case "DELETE":
+				item.Delete = op
 			}
 		}
 
