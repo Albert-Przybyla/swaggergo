@@ -1,0 +1,43 @@
+module_path: github.com/mycompany/myapp
+project_root: .
+output_dir: docs
+
+info:
+  title: My API
+  description: API documentation
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.example.com
+    description: Production
+
+routers:
+  - source: internal/api/router.go
+    output: swagger.yaml
+    base_path: /api/v1
+
+    info:
+      title: My API v1
+      version: 1.0.0
+
+    tags:
+      - name: users
+        description: Users operations
+      - name: products
+        description: Products operations
+
+    security_schemes:
+      BearerAuth:
+        type: http
+        scheme: bearer
+        bearer_format: JWT
+
+    include:
+      - /api/v1/*
+    exclude:
+      - /internal/*
