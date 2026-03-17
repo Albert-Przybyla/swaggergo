@@ -9,7 +9,7 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize swagger config",
+	Short: "Initialize swaggergo config",
 	Run: func(cmd *cobra.Command, args []string) {
 		err := service.InitProject()
 		if err != nil {

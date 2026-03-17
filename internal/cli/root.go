@@ -20,5 +20,8 @@ func Execute() {
 func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(generateCmd)
+	generateCmd.Flags().StringP("config", "c", ".swaggergo.yaml", "config file path")
+	generateCmd.Flags().StringP("output", "o", "", "output directory (overrides config)")
+	generateCmd.Flags().BoolP("verbose", "v", false, "verbose output")
 	rootCmd.AddCommand(versionCmd)
 }
