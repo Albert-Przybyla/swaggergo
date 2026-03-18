@@ -2,13 +2,15 @@ package gin
 
 import "go/ast"
 
-func extractBodyType(fn *ast.FuncDecl) string {
-	if fn == nil || fn.Body == nil {
+func extractBodyType(fn *functionInfo) string {
+	if fn == nil || fn.decl == nil || fn.decl.Body == nil {
 		return ""
 	}
+
+	resolver := newFunctionResolver(fn)
 	var bodyType string
 
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
+	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -19,27 +21,38 @@ func extractBodyType(fn *ast.FuncDecl) string {
 			return true
 		}
 
-		if sel.Sel.Name != "BindJSON" && sel.Sel.Name != "ShouldBindJSON" {
-			return true
+		if len(call.Args) > 0 {
+			if isBodyBindMethod(sel.Sel.Name) {
+				bodyType = trimPointer(resolver.resolveExprType(call.Args[0]))
+				return false
+			}
+			if len(call.Args) > 1 {
+				if isHttpxBodyBindMethod(sel.Sel.Name) {
+					bodyType = trimPointer(resolver.resolveExprType(call.Args[1]))
+					return false
+				}
+			}
 		}
-
-		if len(call.Args) == 0 {
-			return true
-		}
-
-		unary, ok := call.Args[0].(*ast.UnaryExpr)
-		if !ok {
-			return true
-		}
-
-		ident, ok := unary.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-
-		bodyType = ident.Name
-		return false
+		return true
 	})
 
 	return bodyType
+}
+
+func isBodyBindMethod(name string) bool {
+	switch name {
+	case "Bind", "BindJSON", "MustBind", "MustBindWith", "ShouldBind", "ShouldBindBodyWith", "ShouldBindJSON", "ShouldBindWith":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHttpxBodyBindMethod(name string) bool {
+	switch name {
+	case "ValidateStruct":
+		return true
+	default:
+		return false
+	}
 }

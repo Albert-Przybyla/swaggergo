@@ -8,14 +8,14 @@ type Route struct {
 	Group   string
 	Handler string
 
-	QueryParams []string
+	QueryParams []QueryParam
 	BodyType    string
 }
 
-func parseRoutes(file *ast.File, groups map[string]string) []Route {
+func parseRoutes(ctx *packageContext, groups map[string]string) []Route {
 	var routes []Route
 
-	ast.Inspect(file, func(n ast.Node) bool {
+	ast.Inspect(ctx.routerFile, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -53,18 +53,16 @@ func parseRoutes(file *ast.File, groups map[string]string) []Route {
 
 		handler := ""
 		if len(call.Args) > 1 {
-			if sel, ok := call.Args[len(call.Args)-1].(*ast.SelectorExpr); ok {
-				handler = sel.Sel.Name
-			}
+			handler = extractHandlerName(call.Args[len(call.Args)-1])
 		}
 
-		fn := findHandlerDecl(file, handler)
+		fn := findHandlerDecl(ctx, handler)
 
-		var queryParams []string
+		var queryParams []QueryParam
 		var bodyType string
 
 		if fn != nil {
-			queryParams = extractQueryParams(fn)
+			queryParams = extractQueryParams(fn, ctx)
 			bodyType = extractBodyType(fn)
 		}
 
@@ -81,4 +79,15 @@ func parseRoutes(file *ast.File, groups map[string]string) []Route {
 	})
 
 	return routes
+}
+
+func extractHandlerName(expr ast.Expr) string {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return typed.Name
+	case *ast.SelectorExpr:
+		return typed.Sel.Name
+	default:
+		return ""
+	}
 }
