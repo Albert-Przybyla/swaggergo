@@ -24,7 +24,7 @@ func WriteDefault(path string) error {
 	}
 
 	fmt.Printf("Created %s\n", path)
-	fmt.Println("Edit it to match your project, then run: swaggen generate")
+	fmt.Println("Edit it to match your project, then run: swaggergo generate")
 
 	return nil
 }
