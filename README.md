@@ -151,13 +151,57 @@ swaggergo generate --config .swaggergo.yaml --verbose
 
 Output: docs/swagger.yaml ready to use in Swagger UI.
 
+### 4. Host docs UI in Gin
+
+If you want to host the generated documentation without `swaggo`, you can use the [`ginui`](/Users/albert/Projects/swaggergo/ginui/ginui.go) package. This package only adds what's needed to Gin and renders the selected UI from a CDN, so it doesn't bundle assets into your project.
+
+```bash
+go get github.com/Albert-Przybyla/swaggergo/ginui
+```
+
+```go
+package app
+
+import (
+	"github.com/Albert-Przybyla/swaggergo/ginui"
+	"github.com/gin-gonic/gin"
+)
+
+func ProvideRouter() *gin.Engine {
+	r := gin.Default()
+
+	ginui.RegisterUI(r, "/swagger", ginui.Config{
+		UI:      ginui.UISwaggerUI,
+		Title:   "My API Docs",
+		SpecURL: "/docs/swagger.yaml",
+	})
+
+	return r
+}
+```
+
+You can also use the handler directly:
+
+```go
+r.GET("/swagger/*any", ginui.UIHandler(ginui.Config{
+	UI:      ginui.UIReDoc,
+	SpecURL: "/docs/swagger.yaml",
+}))
+```
+
+Dostępne UI:
+
+- `ginui.UISwaggerUI`
+- `ginui.UIReDoc`
+- `ginui.UIScalar`
+
 ---
 
-## Konfiguracja
+## Configuration
 
 ### Tag mapping
 
-Możesz zdefiniować tag i powiązać go z konkretną grupą routera albo ścieżką. Jeśli nie podasz mapowania, `swaggergo` użyje ostatniego statycznego segmentu grupy, więc `preferences/:key` zostanie pokazane jako `preferences`.
+You can define a tag and associate it with a specific router group or path. If you don't provide a mapping, `swaggergo` will use the last static segment of the group, so `preferences/:key` will be shown as `preferences`.
 
 ```yaml
 tags:
@@ -179,8 +223,6 @@ tags:
     security:
       - noAuth
 ```
-
-`default_security` ustawia domyślną autoryzację dla całego routera. `security` na wpisie tagu nadpisuje domyślną autoryzację dla dopasowanej grupy/ścieżki, a specjalna wartość `noAuth` wyłącza auth dla danego endpointu. `no_auth: true` nadal działa jako alias wstecznie kompatybilny.
 
 ---
 
@@ -239,4 +281,4 @@ type UserCreateRequest struct {
 }
 ```
 
-`@Title` trafia do `summary`, `@Description` do `description`. Działa to dla handlerów oraz typów/fields wykorzystywanych w schematach OpenAPI. Bez adnotacji parser używa pierwszej linii komentarza jako `summary`, a kolejnych jako `description`.
+`@Title` goes to `summary`, `@Description` goes to `description`. This works for handlers and types/fields used in OpenAPI schemas. Without annotations, the parser uses the first comment line as `summary`, and subsequent lines as `description`.
