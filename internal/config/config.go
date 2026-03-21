@@ -46,6 +46,7 @@ type RouterConfig struct {
 	Tags []TagConfig `yaml:"tags,omitempty"`
 
 	SecuritySchemes map[string]SecuritySchemeConfig `yaml:"security_schemes,omitempty"`
+	DefaultSecurity []string                        `yaml:"default_security,omitempty"`
 
 	Include []string `yaml:"include,omitempty"`
 	Exclude []string `yaml:"exclude,omitempty"`
@@ -54,8 +55,12 @@ type RouterConfig struct {
 }
 
 type TagConfig struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description,omitempty"`
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description,omitempty"`
+	Groups      []string `yaml:"groups,omitempty"`
+	Paths       []string `yaml:"paths,omitempty"`
+	Security    []string `yaml:"security,omitempty"`
+	NoAuth      bool     `yaml:"no_auth,omitempty"`
 }
 
 type ComponentsConfig struct {

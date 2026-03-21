@@ -28,14 +28,30 @@ routers:
     tags:
       - name: users
         description: Users operations
+        groups:
+          - /users
       - name: products
         description: Products operations
+        paths:
+          - /products
+      - name: public
+        paths:
+          - /api/v1/health
+        security:
+          - noAuth
 
     security_schemes:
       BearerAuth:
         type: http
         scheme: bearer
         bearer_format: JWT
+      ApiKeyAuth:
+        type: apiKey
+        in: header
+        name: X-API-Key
+
+    default_security:
+      - BearerAuth
 
     include:
       - /api/v1/*

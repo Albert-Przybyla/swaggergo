@@ -115,14 +115,25 @@ routers:
     tags:
       - name: users
         description: Users operations
+        groups:
+          - /users
       - name: products
         description: Products operations
+        paths:
+          - /products
 
     security_schemes:
       BearerAuth:
         type: http
         scheme: bearer
         bearer_format: JWT
+      ApiKeyAuth:
+        type: apiKey
+        in: header
+        name: X-API-Key
+
+    default_security:
+      - BearerAuth
 
     include:
       - /api/v1/*
@@ -146,15 +157,30 @@ Output: docs/swagger.yaml ready to use in Swagger UI.
 
 ### Tag mapping
 
+Możesz zdefiniować tag i powiązać go z konkretną grupą routera albo ścieżką. Jeśli nie podasz mapowania, `swaggergo` użyje ostatniego statycznego segmentu grupy, więc `preferences/:key` zostanie pokazane jako `preferences`.
+
 ```yaml
 tags:
-  # key = last segment of handler package path
-  users: Users Management
-  products: Product Catalog
-  orders: Order Processing
-  # or full import path:
-  github.com/mycompany/myapp/internal/handlers/auth: Authentication
+  - name: preferences
+    description: Preferences operations
+    groups:
+      - /preferences/:key
+    security:
+      - BearerAuth
+
+  - name: users
+    description: Users Management
+    paths:
+      - /api/v1/users
+
+  - name: public
+    paths:
+      - /api/v1/health
+    security:
+      - noAuth
 ```
+
+`default_security` ustawia domyślną autoryzację dla całego routera. `security` na wpisie tagu nadpisuje domyślną autoryzację dla dopasowanej grupy/ścieżki, a specjalna wartość `noAuth` wyłącza auth dla danego endpointu. `no_auth: true` nadal działa jako alias wstecznie kompatybilny.
 
 ---
 
@@ -198,13 +224,19 @@ swaggergo --help                help
 
 ## Tips
 
-**Comments as documentation::**
+**Comments as documentation:**
 
 ```go
-// ListUsers returns a paginated list of users.
-// Supports filtering by role, search by username.
-// Use page and page_size query params for pagination.
+// @Title List users
+// @Description Returns a paginated list of users.
+// @Description Supports filtering by role and username.
 func ListUsers(c *gin.Context) { ... }
+
+// UserCreateRequest payload used to create a user.
+type UserCreateRequest struct {
+    // Visible user name.
+    Name string `json:"name"`
+}
 ```
 
-→ First line becomes summary, the rest becomes description.
+`@Title` trafia do `summary`, `@Description` do `description`. Działa to dla handlerów oraz typów/fields wykorzystywanych w schematach OpenAPI. Bez adnotacji parser używa pierwszej linii komentarza jako `summary`, a kolejnych jako `description`.

@@ -61,7 +61,7 @@ type Operation struct {
 	Parameters  []Parameter            `yaml:"parameters,omitempty"`
 	RequestBody *RequestBody           `yaml:"requestBody,omitempty"`
 	Responses   map[string]Response    `yaml:"responses"`
-	Security    []SecurityRequirement  `yaml:"security,omitempty"`
+	Security    *[]SecurityRequirement `yaml:"security,omitempty"`
 	Deprecated  bool                   `yaml:"deprecated,omitempty"`
 	Callbacks   map[string]interface{} `yaml:"callbacks,omitempty"`
 }

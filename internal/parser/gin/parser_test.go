@@ -35,15 +35,15 @@ import (
 type UserHandler struct{}
 
 type ListFilters struct {
-	Page   int    ` + "`form:\"page\" binding:\"required\"`" + `
-	Search string ` + "`form:\"search\"`" + `
-	Active bool   ` + "`form:\"active\"`" + `
+	Page   int    `+"`form:\"page\" binding:\"required\"`"+`
+	Search string `+"`form:\"search\"`"+`
+	Active bool   `+"`form:\"active\"`"+`
 }
 
 type CreateUserRequest struct {
-	Name    string ` + "`json:\"name\"`" + `
-	Age     int    ` + "`json:\"age\"`" + `
-	Enabled bool   ` + "`json:\"enabled,omitempty\"`" + `
+	Name    string `+"`json:\"name\"`"+`
+	Age     int    `+"`json:\"age\"`"+`
+	Enabled bool   `+"`json:\"enabled,omitempty\"`"+`
 }
 
 func (h *UserHandler) List(c *gin.Context) {
@@ -169,8 +169,8 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	writeTestFile(t, modelFile, `package models
 
 type ChangePasswordPayload struct {
-	CurrentPassword string ` + "`json:\"currentPassword\"`" + `
-	NewPassword     string ` + "`json:\"newPassword\"`" + `
+	CurrentPassword string `+"`json:\"currentPassword\"`"+`
+	NewPassword     string `+"`json:\"newPassword\"`"+`
 }
 `)
 
@@ -202,6 +202,112 @@ type ChangePasswordPayload struct {
 
 	if schema.Properties["newPassword"] == nil || schema.Properties["newPassword"].Type != "string" {
 		t.Fatalf("expected newPassword field to be string, got %#v", schema.Properties["newPassword"])
+	}
+}
+
+func TestParseFileExtractsDescriptionsAndHttpxBody(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app")
+	handlerDir := filepath.Join(root, "handler")
+	dtoDir := filepath.Join(root, "dto")
+
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(appDir) error = %v", err)
+	}
+	if err := os.MkdirAll(handlerDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(handlerDir) error = %v", err)
+	}
+	if err := os.MkdirAll(dtoDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(dtoDir) error = %v", err)
+	}
+
+	routerFile := filepath.Join(appDir, "router.go")
+	handlerFile := filepath.Join(handlerDir, "preferences.go")
+	dtoFile := filepath.Join(dtoDir, "preferences.go")
+
+	writeTestFile(t, routerFile, `package app
+
+import (
+	"example.com/app/handler"
+	"github.com/gin-gonic/gin"
+)
+
+func ProvideRouter(preferencesHandler *handler.PreferencesHandler) *gin.Engine {
+	r := gin.Default()
+	api := r.Group("api/v1")
+	preferences := api.Group("preferences/:key")
+	preferences.POST("", preferencesHandler.Create)
+	return r
+}
+`)
+
+	writeTestFile(t, handlerFile, `package handler
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/example/common/httpx"
+	"example.com/app/dto"
+)
+
+type PreferencesHandler struct{}
+
+// @Title Create Preferences
+// @Description Creates preference for specific key.
+func (h *PreferencesHandler) Create(c *gin.Context) {
+	var body dto.PreferencesRequest
+	if err := httpx.ValidateStruct(c, &body); err != nil {
+		return
+	}
+}
+`)
+
+	writeTestFile(t, dtoFile, `package dto
+
+// PreferencesRequest payload for preference operations.
+type PreferencesRequest struct {
+	// Human readable preference name.
+	Name string `+"`json:\"name\" validate:\"required\"`"+`
+}
+`)
+
+	parsed, err := ParseFile(routerFile, ParseOptions{
+		ProjectRoot: root,
+		ModulePath:  "example.com/app",
+	})
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	route := routeByMethod(parsed.Routes, "POST")
+	if route == nil {
+		t.Fatal("POST route not found")
+	}
+
+	if got, want := route.Summary, "Create Preferences"; got != want {
+		t.Fatalf("expected summary %q, got %q", want, got)
+	}
+
+	if got, want := route.Description, "Creates preference for specific key."; got != want {
+		t.Fatalf("expected description %q, got %q", want, got)
+	}
+
+	if got, want := route.BodyType, "dto.PreferencesRequest"; got != want {
+		t.Fatalf("expected body type %q, got %q", want, got)
+	}
+
+	schema := parsed.Schemas["dto.PreferencesRequest"]
+	if schema == nil {
+		t.Fatal("dto.PreferencesRequest schema not found")
+	}
+
+	if got, want := schema.Description, "PreferencesRequest payload for preference operations."; got != want {
+		t.Fatalf("expected schema description %q, got %q", want, got)
+	}
+
+	if schema.Properties["name"] == nil || schema.Properties["name"].Description != "Human readable preference name." {
+		t.Fatalf("expected field description to be preserved, got %#v", schema.Properties["name"])
 	}
 }
 

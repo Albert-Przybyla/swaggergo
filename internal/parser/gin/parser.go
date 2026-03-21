@@ -21,12 +21,13 @@ type ParseOptions struct {
 }
 
 type packageContext struct {
-	routerFile *ast.File
-	routerPkg  *packageInfo
-	files      []*ast.File
-	funcs      map[string][]*functionInfo
-	structs    map[string]*structInfo
-	packages   map[string]*packageInfo
+	routerFile     *ast.File
+	routerFileInfo *fileInfo
+	routerPkg      *packageInfo
+	files          []*ast.File
+	funcs          map[string][]*functionInfo
+	structs        map[string]*structInfo
+	packages       map[string]*packageInfo
 }
 
 type functionInfo struct {
@@ -39,6 +40,7 @@ type structInfo struct {
 	name       string
 	file       *fileInfo
 	structType *ast.StructType
+	doc        *ast.CommentGroup
 }
 
 type packageInfo struct {
@@ -74,7 +76,7 @@ func parsePackage(path string, opts ParseOptions) (*packageContext, error) {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
 
-	pkgs, err := parser.ParseDir(fset, dir, nil, 0)
+	pkgs, err := parser.ParseDir(fset, dir, nil, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse package: %w", err)
 	}
@@ -101,6 +103,7 @@ func parsePackage(path string, opts ParseOptions) (*packageContext, error) {
 
 			if filepath.Base(filePath) == base {
 				ctx.routerFile = file
+				ctx.routerFileInfo = fileInfo
 			}
 
 			ctx.files = append(ctx.files, file)
@@ -185,7 +188,7 @@ func indexProjectStructs(ctx *packageContext, opts ParseOptions, fset *token.Fil
 			return nil
 		}
 
-		file, err := parser.ParseFile(fset, path, nil, 0)
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {
 			return err
 		}
@@ -205,6 +208,7 @@ func indexProjectStructs(ctx *packageContext, opts ParseOptions, fset *token.Fil
 		}
 
 		fileInfo := newFileInfo(path, file, pkgInfo)
+		indexPackageDecls(ctx, fileInfo)
 		for _, decl := range file.Decls {
 			gen, ok := decl.(*ast.GenDecl)
 			if !ok {
@@ -234,11 +238,17 @@ func indexStructDecls(ctx *packageContext, fileInfo *fileInfo, gen *ast.GenDecl,
 		}
 
 		key := typeKeyForFile(fileInfo, typeSpec.Name.Name, localPackage)
+		doc := typeSpec.Doc
+		if doc == nil {
+			doc = gen.Doc
+		}
+
 		ctx.structs[key] = &structInfo{
 			key:        key,
 			name:       typeSpec.Name.Name,
 			file:       fileInfo,
 			structType: structType,
+			doc:        doc,
 		}
 	}
 }

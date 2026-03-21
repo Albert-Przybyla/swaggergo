@@ -21,7 +21,7 @@ func buildRouterSpec(cfg *config.Config, routerCfg config.RouterConfig, parsed *
 			Description: info.Description,
 			Version:     info.Version,
 		},
-		Paths: make(map[string]*generator.PathItem),
+		Paths:      make(map[string]*generator.PathItem),
 		Components: newComponents(),
 	}
 
@@ -30,9 +30,10 @@ func buildRouterSpec(cfg *config.Config, routerCfg config.RouterConfig, parsed *
 	applyTags(spec, routerCfg.Tags)
 	applyConfiguredComponents(spec.Components, cfg.Components)
 	applyConfiguredComponents(spec.Components, routerCfg.Components)
-	applySecurity(spec, routerCfg.SecuritySchemes)
+	applySecuritySchemes(spec, routerCfg.SecuritySchemes)
+	applyDefaultSecurity(spec, routerCfg.DefaultSecurity)
 	applyParsedSchemas(spec.Components, parsed.Schemas)
-	applyRoutes(spec, routerCfg.BasePath, parsed.Routes)
+	applyRoutes(spec, routerCfg.BasePath, parsed.Routes, routerCfg.Tags, routerCfg.DefaultSecurity)
 
 	return spec
 }
@@ -72,7 +73,7 @@ func applyTags(spec *generator.OpenAPISpec, tags []config.TagConfig) {
 	}
 }
 
-func applySecurity(spec *generator.OpenAPISpec, schemes map[string]config.SecuritySchemeConfig) {
+func applySecuritySchemes(spec *generator.OpenAPISpec, schemes map[string]config.SecuritySchemeConfig) {
 	for name, scheme := range schemes {
 		spec.Components.SecuritySchemes[name] = generator.SecurityScheme{
 			Type:         scheme.Type,
@@ -82,18 +83,18 @@ func applySecurity(spec *generator.OpenAPISpec, schemes map[string]config.Securi
 			Name:         scheme.Name,
 			Description:  scheme.Description,
 		}
-
-		spec.Security = append(spec.Security, generator.SecurityRequirement{
-			name: {},
-		})
 	}
 }
 
-func applyRoutes(spec *generator.OpenAPISpec, basePath string, routes []ginparser.Route) {
+func applyDefaultSecurity(spec *generator.OpenAPISpec, names []string) {
+	spec.Security = buildSecurityRequirements(names)
+}
+
+func applyRoutes(spec *generator.OpenAPISpec, basePath string, routes []ginparser.Route, tags []config.TagConfig, defaultSecurity []string) {
 	for _, route := range routes {
 		fullPath := ginparser.NormalizePath(ginparser.BuildFullPath(basePath, route.Group, route.Path))
 		item := ensurePathItem(spec.Paths, fullPath)
-		op := buildOperation(route, fullPath)
+		op := buildOperation(route, fullPath, tags, defaultSecurity)
 
 		switch strings.ToUpper(route.Method) {
 		case "GET":

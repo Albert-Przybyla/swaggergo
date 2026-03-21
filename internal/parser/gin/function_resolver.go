@@ -13,6 +13,8 @@ func newFunctionResolver(fn *functionInfo) *functionResolver {
 		varTypes: make(map[string]string),
 	}
 
+	resolver.indexFuncParams()
+
 	if fn == nil || fn.decl == nil || fn.decl.Body == nil {
 		return resolver
 	}
@@ -29,6 +31,19 @@ func newFunctionResolver(fn *functionInfo) *functionResolver {
 	})
 
 	return resolver
+}
+
+func (r *functionResolver) indexFuncParams() {
+	if r.fn == nil || r.fn.decl == nil || r.fn.decl.Type == nil || r.fn.decl.Type.Params == nil {
+		return
+	}
+
+	for _, field := range r.fn.decl.Type.Params.List {
+		typeName := r.exprTypeName(field.Type)
+		for _, name := range field.Names {
+			r.varTypes[name.Name] = typeName
+		}
+	}
 }
 
 func (r *functionResolver) indexDeclStmt(stmt *ast.DeclStmt) {

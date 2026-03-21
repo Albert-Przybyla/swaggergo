@@ -56,10 +56,11 @@ func convertParsedSchema(schema *ginparser.Schema) *generator.Schema {
 	}
 
 	converted := &generator.Schema{
-		Ref:      schema.Ref,
-		Type:     schema.Type,
-		Format:   schema.Format,
-		Required: schema.Required,
+		Ref:         schema.Ref,
+		Type:        schema.Type,
+		Format:      schema.Format,
+		Description: schema.Description,
+		Required:    schema.Required,
 	}
 
 	if schema.Items != nil {

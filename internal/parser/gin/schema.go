@@ -6,12 +6,13 @@ import (
 )
 
 type Schema struct {
-	Ref        string
-	Type       string
-	Format     string
-	Properties map[string]*Schema
-	Items      *Schema
-	Required   []string
+	Ref         string
+	Type        string
+	Format      string
+	Description string
+	Properties  map[string]*Schema
+	Items       *Schema
+	Required    []string
 }
 
 func collectRouteSchemas(routes []Route, ctx *packageContext) map[string]*Schema {
@@ -59,8 +60,9 @@ func addSchemaFromTypeName(dst map[string]*Schema, seen map[string]bool, typeNam
 
 func schemaFromStruct(info *structInfo, dst map[string]*Schema, seen map[string]bool, ctx *packageContext) *Schema {
 	schema := &Schema{
-		Type:       "object",
-		Properties: make(map[string]*Schema),
+		Type:        "object",
+		Description: parseDescription(info.doc),
+		Properties:  make(map[string]*Schema),
 	}
 
 	for _, field := range info.structType.Fields.List {
@@ -74,6 +76,7 @@ func schemaFromStruct(info *structInfo, dst map[string]*Schema, seen map[string]
 			continue
 		}
 
+		fieldSchema.Description = fieldDescription(field)
 		schema.Properties[fieldName] = fieldSchema
 		if !isOptionalField(field) {
 			schema.Required = append(schema.Required, fieldName)
@@ -143,6 +146,7 @@ func inlineSchemaFromStruct(structType *ast.StructType, currentFile *fileInfo, d
 			continue
 		}
 
+		fieldSchema.Description = fieldDescription(field)
 		schema.Properties[fieldName] = fieldSchema
 		if !isOptionalField(field) {
 			schema.Required = append(schema.Required, fieldName)
@@ -219,4 +223,16 @@ func isOptionalField(field *ast.Field) bool {
 func isBuiltinTypeName(typeName string) bool {
 	_, ok := builtinSchema(typeName)
 	return ok
+}
+
+func fieldDescription(field *ast.Field) string {
+	if field == nil {
+		return ""
+	}
+
+	if description := parseDescription(field.Doc); description != "" {
+		return description
+	}
+
+	return parseDescription(field.Comment)
 }

@@ -8,6 +8,8 @@ type Route struct {
 	Group   string
 	Handler string
 
+	Summary     string
+	Description string
 	QueryParams []QueryParam
 	BodyType    string
 }
@@ -15,79 +17,104 @@ type Route struct {
 func parseRoutes(ctx *packageContext, groups map[string]string) []Route {
 	var routes []Route
 
-	ast.Inspect(ctx.routerFile, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
+	for _, decl := range ctx.routerFile.Decls {
+		fnDecl, ok := decl.(*ast.FuncDecl)
+		if !ok || fnDecl.Body == nil {
+			continue
 		}
 
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-
-		method := sel.Sel.Name
-		if !isHTTPMethod(method) {
-			return true
-		}
-
-		ident, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-
-		groupName := ident.Name
-		groupPath, ok := groups[groupName]
-		if !ok {
-			return true
-		}
-
-		if len(call.Args) == 0 {
-			return true
-		}
-
-		pathLit, ok := call.Args[0].(*ast.BasicLit)
-		if !ok {
-			return true
-		}
-
-		handler := ""
-		if len(call.Args) > 1 {
-			handler = extractHandlerName(call.Args[len(call.Args)-1])
-		}
-
-		fn := findHandlerDecl(ctx, handler)
-
-		var queryParams []QueryParam
-		var bodyType string
-
-		if fn != nil {
-			queryParams = extractQueryParams(fn, ctx)
-			bodyType = extractBodyType(fn)
-		}
-
-		routes = append(routes, Route{
-			Method:      method,
-			Path:        trimQuotes(pathLit.Value),
-			Group:       groupPath,
-			Handler:     handler,
-			QueryParams: queryParams,
-			BodyType:    bodyType,
+		resolver := newFunctionResolver(&functionInfo{
+			decl: fnDecl,
+			file: ctx.routerFileInfo,
 		})
 
-		return true
-	})
+		ast.Inspect(fnDecl.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+
+			method := sel.Sel.Name
+			if !isHTTPMethod(method) {
+				return true
+			}
+
+			ident, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+
+			groupName := ident.Name
+			groupPath, ok := groups[groupName]
+			if !ok {
+				return true
+			}
+
+			if len(call.Args) == 0 {
+				return true
+			}
+
+			pathLit, ok := call.Args[0].(*ast.BasicLit)
+			if !ok {
+				return true
+			}
+
+			handlerRef := handlerReference{}
+			if len(call.Args) > 1 {
+				handlerRef = extractHandlerReference(call.Args[len(call.Args)-1], resolver)
+			}
+
+			fn := findHandlerDecl(ctx, handlerRef)
+
+			var queryParams []QueryParam
+			var bodyType string
+			var summary string
+			var description string
+
+			if fn != nil {
+				queryParams = extractQueryParams(fn, ctx)
+				bodyType = extractBodyType(fn)
+				summary, description = parseCommentMetadata(fn.decl.Doc)
+			}
+
+			routes = append(routes, Route{
+				Method:      method,
+				Path:        trimQuotes(pathLit.Value),
+				Group:       groupPath,
+				Handler:     handlerRef.Name,
+				Summary:     summary,
+				Description: description,
+				QueryParams: queryParams,
+				BodyType:    bodyType,
+			})
+
+			return true
+		})
+	}
 
 	return routes
 }
 
 func extractHandlerName(expr ast.Expr) string {
+	return extractHandlerReference(expr, nil).Name
+}
+
+func extractHandlerReference(expr ast.Expr, resolver *functionResolver) handlerReference {
 	switch typed := expr.(type) {
 	case *ast.Ident:
-		return typed.Name
+		return handlerReference{Name: typed.Name}
 	case *ast.SelectorExpr:
-		return typed.Sel.Name
+		ref := handlerReference{Name: typed.Sel.Name}
+		if resolver != nil {
+			ref.ReceiverType = trimPointer(resolver.resolveExprType(typed.X))
+		}
+		return ref
 	default:
-		return ""
+		return handlerReference{}
 	}
 }
