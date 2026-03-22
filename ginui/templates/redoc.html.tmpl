@@ -5,8 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ .Title }}</title>
   <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+    }
+  </style>
 </head>
 <body>
-  <redoc spec-url="{{ .SpecURL }}"></redoc>
+  <div id="redoc-container"></div>
+  <script>
+    Redoc.init("{{ .SpecURL }}", {}, document.getElementById("redoc-container"));
+  </script>
 </body>
 </html>

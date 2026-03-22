@@ -57,7 +57,7 @@ func TestRegisterUIRegistersConvenienceRoutes(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 for %s, got %d", path, rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), `<redoc spec-url="/openapi.yaml"></redoc>`) {
+		if !strings.Contains(rec.Body.String(), `Redoc.init("\/openapi.yaml", {}, document.getElementById("redoc-container"));`) {
 			t.Fatalf("expected redoc html for %s, got %q", path, rec.Body.String())
 		}
 	}
