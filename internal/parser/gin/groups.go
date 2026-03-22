@@ -39,7 +39,12 @@ func parseGroups(file *ast.File) map[string]string {
 			return true
 		}
 
-		groups[ident.Name] = trimQuotes(arg.Value)
+		parentPath := ""
+		if baseIdent, ok := sel.X.(*ast.Ident); ok {
+			parentPath = groups[baseIdent.Name]
+		}
+
+		groups[ident.Name] = join(parentPath, trimQuotes(arg.Value))
 		return true
 	})
 

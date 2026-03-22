@@ -23,6 +23,9 @@ func collectRouteSchemas(routes []Route, ctx *packageContext) map[string]*Schema
 		if route.BodyType != "" {
 			addSchemaFromTypeName(schemas, seen, route.BodyType, ctx)
 		}
+		if route.Response.TypeName != "" {
+			addSchemaFromTypeName(schemas, seen, route.Response.TypeName, ctx)
+		}
 
 		for _, param := range route.QueryParams {
 			if param.TypeName != "" {
@@ -35,30 +38,52 @@ func collectRouteSchemas(routes []Route, ctx *packageContext) map[string]*Schema
 }
 
 func addSchemaFromTypeName(dst map[string]*Schema, seen map[string]bool, typeName string, ctx *packageContext) {
-	baseName := trimPointer(typeName)
-	if baseName == "" || isBuiltinTypeName(baseName) {
+	typeName = normalizeSchemaTypeName(typeName)
+	if typeName == "" || isBuiltinTypeName(typeName) {
 		return
 	}
 
-	if seen != nil && seen[baseName] {
+	if seen != nil && seen[typeName] {
 		return
 	}
 
+	baseName, typeArgs := splitGenericTypeName(typeName)
 	info := ctx.structs[baseName]
 	if info == nil {
 		return
 	}
 
 	if seen != nil {
-		seen[baseName] = true
+		seen[typeName] = true
 	}
 
 	if dst != nil {
-		dst[baseName] = schemaFromStruct(info, dst, seen, ctx)
+		if len(typeArgs) > 0 && len(info.typeParams) > 0 {
+			dst[typeName] = schemaFromStructWithBindings(info, dst, seen, ctx, bindTypeParams(info.typeParams, typeArgs))
+			return
+		}
+		dst[typeName] = schemaFromStruct(info, dst, seen, ctx)
 	}
 }
 
+func normalizeSchemaTypeName(typeName string) string {
+	typeName = trimPointer(typeName)
+	for strings.HasPrefix(typeName, "[]") {
+		typeName = strings.TrimPrefix(typeName, "[]")
+		typeName = trimPointer(typeName)
+	}
+	return typeName
+}
+
+func NormalizeSchemaTypeName(typeName string) string {
+	return normalizeSchemaTypeName(typeName)
+}
+
 func schemaFromStruct(info *structInfo, dst map[string]*Schema, seen map[string]bool, ctx *packageContext) *Schema {
+	return schemaFromStructWithBindings(info, dst, seen, ctx, nil)
+}
+
+func schemaFromStructWithBindings(info *structInfo, dst map[string]*Schema, seen map[string]bool, ctx *packageContext, bindings map[string]string) *Schema {
 	schema := &Schema{
 		Type:        "object",
 		Description: parseDescription(info.doc),
@@ -71,7 +96,7 @@ func schemaFromStruct(info *structInfo, dst map[string]*Schema, seen map[string]
 			continue
 		}
 
-		fieldSchema := schemaFromExpr(field.Type, info.file, dst, seen, ctx)
+		fieldSchema := schemaFromExprWithBindings(field.Type, info.file, dst, seen, ctx, bindings)
 		if fieldSchema == nil {
 			continue
 		}
@@ -87,20 +112,28 @@ func schemaFromStruct(info *structInfo, dst map[string]*Schema, seen map[string]
 }
 
 func schemaFromExpr(expr ast.Expr, currentFile *fileInfo, dst map[string]*Schema, seen map[string]bool, ctx *packageContext) *Schema {
+	return schemaFromExprWithBindings(expr, currentFile, dst, seen, ctx, nil)
+}
+
+func schemaFromExprWithBindings(expr ast.Expr, currentFile *fileInfo, dst map[string]*Schema, seen map[string]bool, ctx *packageContext, bindings map[string]string) *Schema {
 	switch typed := expr.(type) {
 	case *ast.Ident:
+		if bindings != nil {
+			if mapped := normalizeSchemaTypeName(bindings[typed.Name]); mapped != "" {
+				return schemaForTypeName(mapped, currentFile, dst, seen, ctx)
+			}
+		}
 		if schema, ok := builtinSchema(typed.Name); ok {
 			return schema
 		}
 
-		addSchemaFromTypeName(dst, seen, typed.Name, ctx)
-		return &Schema{Ref: "#/components/schemas/" + typed.Name}
+		return schemaForTypeName(typed.Name, currentFile, dst, seen, ctx)
 	case *ast.StarExpr:
-		return schemaFromExpr(typed.X, currentFile, dst, seen, ctx)
+		return schemaFromExprWithBindings(typed.X, currentFile, dst, seen, ctx, bindings)
 	case *ast.ArrayType:
 		return &Schema{
 			Type:  "array",
-			Items: schemaFromExpr(typed.Elt, currentFile, dst, seen, ctx),
+			Items: schemaFromExprWithBindings(typed.Elt, currentFile, dst, seen, ctx, bindings),
 		}
 	case *ast.SelectorExpr:
 		fullName := selectorName(typed)
@@ -118,10 +151,15 @@ func schemaFromExpr(expr ast.Expr, currentFile *fileInfo, dst map[string]*Schema
 			return schema
 		}
 
-		addSchemaFromTypeName(dst, seen, fullName, ctx)
-		return &Schema{Ref: "#/components/schemas/" + fullName}
+		return schemaForTypeName(fullName, currentFile, dst, seen, ctx)
+	case *ast.IndexExpr:
+		typeName := exprTypeNameForFile(typed, currentFile)
+		return schemaForTypeName(typeName, currentFile, dst, seen, ctx)
+	case *ast.IndexListExpr:
+		typeName := exprTypeNameForFile(typed, currentFile)
+		return schemaForTypeName(typeName, currentFile, dst, seen, ctx)
 	case *ast.StructType:
-		return inlineSchemaFromStruct(typed, currentFile, dst, seen, ctx)
+		return inlineSchemaFromStructWithBindings(typed, currentFile, dst, seen, ctx, bindings)
 	case *ast.MapType:
 		return &Schema{Type: "object"}
 	default:
@@ -130,6 +168,10 @@ func schemaFromExpr(expr ast.Expr, currentFile *fileInfo, dst map[string]*Schema
 }
 
 func inlineSchemaFromStruct(structType *ast.StructType, currentFile *fileInfo, dst map[string]*Schema, seen map[string]bool, ctx *packageContext) *Schema {
+	return inlineSchemaFromStructWithBindings(structType, currentFile, dst, seen, ctx, nil)
+}
+
+func inlineSchemaFromStructWithBindings(structType *ast.StructType, currentFile *fileInfo, dst map[string]*Schema, seen map[string]bool, ctx *packageContext, bindings map[string]string) *Schema {
 	schema := &Schema{
 		Type:       "object",
 		Properties: make(map[string]*Schema),
@@ -141,7 +183,7 @@ func inlineSchemaFromStruct(structType *ast.StructType, currentFile *fileInfo, d
 			continue
 		}
 
-		fieldSchema := schemaFromExpr(field.Type, currentFile, dst, seen, ctx)
+		fieldSchema := schemaFromExprWithBindings(field.Type, currentFile, dst, seen, ctx, bindings)
 		if fieldSchema == nil {
 			continue
 		}
@@ -156,8 +198,83 @@ func inlineSchemaFromStruct(structType *ast.StructType, currentFile *fileInfo, d
 	return schema
 }
 
+func schemaForTypeName(typeName string, currentFile *fileInfo, dst map[string]*Schema, seen map[string]bool, ctx *packageContext) *Schema {
+	typeName = normalizeSchemaTypeName(typeName)
+	if typeName == "" {
+		return &Schema{Type: "object"}
+	}
+
+	if schema, ok := builtinSchema(typeName); ok {
+		return schema
+	}
+
+	addSchemaFromTypeName(dst, seen, typeName, ctx)
+	return &Schema{Ref: "#/components/schemas/" + typeName}
+}
+
+func bindTypeParams(names []string, args []string) map[string]string {
+	if len(names) == 0 || len(args) == 0 {
+		return nil
+	}
+
+	bindings := make(map[string]string, len(names))
+	for i, name := range names {
+		if i >= len(args) {
+			break
+		}
+		bindings[name] = args[i]
+	}
+	return bindings
+}
+
+func splitGenericTypeName(typeName string) (string, []string) {
+	typeName = normalizeSchemaTypeName(typeName)
+	start := strings.Index(typeName, "[")
+	end := strings.LastIndex(typeName, "]")
+	if start == -1 || end == -1 || end < start {
+		return typeName, nil
+	}
+
+	base := strings.TrimSpace(typeName[:start])
+	rawArgs := typeName[start+1 : end]
+	return base, splitTopLevel(rawArgs, ',')
+}
+
+func splitTopLevel(input string, sep rune) []string {
+	var parts []string
+	depth := 0
+	start := 0
+
+	for i, r := range input {
+		switch r {
+		case '[':
+			depth++
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if r == sep && depth == 0 {
+				part := strings.TrimSpace(input[start:i])
+				if part != "" {
+					parts = append(parts, part)
+				}
+				start = i + 1
+			}
+		}
+	}
+
+	last := strings.TrimSpace(input[start:])
+	if last != "" {
+		parts = append(parts, last)
+	}
+
+	return parts
+}
+
 func builtinSchema(typeName string) (*Schema, bool) {
-	switch trimPointer(typeName) {
+	typeName = trimPointer(typeName)
+	switch typeName {
 	case "string":
 		return &Schema{Type: "string"}, true
 	case "bool":
@@ -177,8 +294,15 @@ func builtinSchema(typeName string) (*Schema, bool) {
 	case "time.Time":
 		return &Schema{Type: "string", Format: "date-time"}, true
 	default:
+		if typeName == "UUID" || strings.HasSuffix(typeName, ".UUID") {
+			return &Schema{Type: "string", Format: "uuid"}, true
+		}
 		return nil, false
 	}
+}
+
+func BuiltinSchemaForType(typeName string) (*Schema, bool) {
+	return builtinSchema(typeName)
 }
 
 func extractFieldName(field *ast.Field) (string, bool) {

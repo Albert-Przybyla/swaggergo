@@ -12,6 +12,7 @@ type Route struct {
 	Description string
 	QueryParams []QueryParam
 	BodyType    string
+	Response    RouteResponse
 }
 
 func parseRoutes(ctx *packageContext, groups map[string]string) []Route {
@@ -75,11 +76,13 @@ func parseRoutes(ctx *packageContext, groups map[string]string) []Route {
 			var bodyType string
 			var summary string
 			var description string
+			var response RouteResponse
 
 			if fn != nil {
 				queryParams = extractQueryParams(fn, ctx)
 				bodyType = extractBodyType(fn)
 				summary, description = parseCommentMetadata(fn.decl.Doc)
+				response = extractResponse(fn, ctx)
 			}
 
 			routes = append(routes, Route{
@@ -91,6 +94,7 @@ func parseRoutes(ctx *packageContext, groups map[string]string) []Route {
 				Description: description,
 				QueryParams: queryParams,
 				BodyType:    bodyType,
+				Response:    response,
 			})
 
 			return true

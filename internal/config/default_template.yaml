@@ -19,7 +19,6 @@ servers:
 routers:
   - source: internal/api/router.go
     output: swagger.yaml
-    base_path: /api/v1
 
     info:
       title: My API v1

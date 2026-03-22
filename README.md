@@ -189,7 +189,7 @@ r.GET("/swagger/*any", ginui.UIHandler(ginui.Config{
 }))
 ```
 
-Dostępne UI:
+Available UI:
 
 - `ginui.UISwaggerUI`
 - `ginui.UIReDoc`

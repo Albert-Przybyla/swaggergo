@@ -205,6 +205,94 @@ type ChangePasswordPayload struct {
 	}
 }
 
+func TestParseFileTreatsUUIDTypesAsStrings(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	apiDir := filepath.Join(root, "api")
+	dtoDir := filepath.Join(root, "dto")
+
+	if err := os.MkdirAll(apiDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(apiDir) error = %v", err)
+	}
+	if err := os.MkdirAll(dtoDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(dtoDir) error = %v", err)
+	}
+
+	routerFile := filepath.Join(apiDir, "router.go")
+	handlerFile := filepath.Join(apiDir, "handler.go")
+	dtoFile := filepath.Join(dtoDir, "request.go")
+
+	writeTestFile(t, routerFile, `package api
+
+import "github.com/gin-gonic/gin"
+
+func SetupRoutes(r *gin.RouterGroup, h *BundleHandler) {
+	bundles := r.Group("/bundles")
+	bundles.POST("", h.Create)
+}
+`)
+
+	writeTestFile(t, handlerFile, `package api
+
+import (
+	"github.com/gin-gonic/gin"
+	"example.com/app/dto"
+)
+
+type BundleHandler struct{}
+
+func (h *BundleHandler) Create(c *gin.Context) {
+	var req dto.CreateBundleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return
+	}
+}
+`)
+
+	writeTestFile(t, dtoFile, `package dto
+
+import "github.com/google/uuid"
+
+type BundleSizeRequest struct {
+	Size string `+"`json:\"size\"`"+`
+}
+
+type CreateBundleRequest struct {
+	Name        string              `+"`json:\"name\"`"+`
+	Features    []uuid.UUID         `+"`json:\"features\"`"+`
+	BundleSizes []BundleSizeRequest `+"`json:\"bundle_sizes\"`"+`
+}
+`)
+
+	parsed, err := ParseFile(routerFile, ParseOptions{
+		ProjectRoot: root,
+		ModulePath:  "example.com/app",
+	})
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	schema := parsed.Schemas["dto.CreateBundleRequest"]
+	if schema == nil {
+		t.Fatal("dto.CreateBundleRequest schema not found")
+	}
+
+	features := schema.Properties["features"]
+	if features == nil || features.Type != "array" || features.Items == nil {
+		t.Fatalf("expected features array schema, got %#v", features)
+	}
+	if got, want := features.Items.Type, "string"; got != want {
+		t.Fatalf("expected UUID array items to be string, got %q", got)
+	}
+	if got, want := features.Items.Format, "uuid"; got != want {
+		t.Fatalf("expected UUID array items format %q, got %q", want, got)
+	}
+	if features.Items.Ref != "" {
+		t.Fatalf("expected UUID array items to avoid refs, got %q", features.Items.Ref)
+	}
+}
+
 func TestParseFileExtractsDescriptionsAndHttpxBody(t *testing.T) {
 	t.Parallel()
 
@@ -234,13 +322,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func ProvideRouter(preferencesHandler *handler.PreferencesHandler) *gin.Engine {
-	r := gin.Default()
-	api := r.Group("api/v1")
-	preferences := api.Group("preferences/:key")
-	preferences.POST("", preferencesHandler.Create)
-	return r
-}
+	func ProvideRouter(preferencesHandler *handler.PreferencesHandler) *gin.Engine {
+		r := gin.Default()
+		api := r.Group("api/v1")
+		preferences := api.Group("preferences/:key")
+		preferences.POST("", preferencesHandler.Create)
+		return r
+	}
 `)
 
 	writeTestFile(t, handlerFile, `package handler
@@ -255,12 +343,12 @@ type PreferencesHandler struct{}
 
 // @Title Create Preferences
 // @Description Creates preference for specific key.
-func (h *PreferencesHandler) Create(c *gin.Context) {
-	var body dto.PreferencesRequest
-	if err := httpx.ValidateStruct(c, &body); err != nil {
-		return
+	func (h *PreferencesHandler) Create(c *gin.Context) {
+		var body dto.PreferencesRequest
+		if err := httpx.ValidateStruct(c, &body); err != nil {
+			return
+		}
 	}
-}
 `)
 
 	writeTestFile(t, dtoFile, `package dto
@@ -308,6 +396,342 @@ type PreferencesRequest struct {
 
 	if schema.Properties["name"] == nil || schema.Properties["name"].Description != "Human readable preference name." {
 		t.Fatalf("expected field description to be preserved, got %#v", schema.Properties["name"])
+	}
+}
+
+func TestParseFileResolvesNestedGroupAliases(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	routerFile := filepath.Join(dir, "router.go")
+	handlerFile := filepath.Join(dir, "handlers.go")
+
+	writeTestFile(t, routerFile, `package api
+
+import "github.com/gin-gonic/gin"
+
+func SetupRoutes(r *gin.RouterGroup, h *OrderHandler) {
+	api := r.Group("api/v1")
+	order := api.Group("order")
+	orderAdminView := order.Group("")
+	orderAdminView.GET(":id/payment", h.FetchOrderPayment)
+}
+`)
+
+	writeTestFile(t, handlerFile, `package api
+
+import "github.com/gin-gonic/gin"
+
+type OrderHandler struct{}
+
+func (h *OrderHandler) FetchOrderPayment(c *gin.Context) {}
+`)
+
+	parsed, err := ParseFile(routerFile, ParseOptions{})
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	route := routeByMethod(parsed.Routes, "GET")
+	if route == nil {
+		t.Fatal("GET route not found")
+	}
+
+	if got, want := route.Group, "api/v1/order"; got != want {
+		t.Fatalf("expected nested group path %q, got %q", want, got)
+	}
+	if got, want := BuildFullPath("", route.Group, route.Path), "/api/v1/order/:id/payment"; got != want {
+		t.Fatalf("expected full path %q, got %q", want, got)
+	}
+}
+
+func TestParseFileExtractsResponseBodyFromServiceCall(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	apiDir := filepath.Join(root, "api")
+	dtoDir := filepath.Join(root, "dto")
+
+	if err := os.MkdirAll(apiDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(apiDir) error = %v", err)
+	}
+	if err := os.MkdirAll(dtoDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(dtoDir) error = %v", err)
+	}
+
+	routerFile := filepath.Join(apiDir, "router.go")
+	handlerFile := filepath.Join(apiDir, "handler.go")
+	serviceFile := filepath.Join(apiDir, "service.go")
+	dtoFile := filepath.Join(dtoDir, "preferences.go")
+
+	writeTestFile(t, routerFile, `package api
+
+import "github.com/gin-gonic/gin"
+
+func SetupRoutes(r *gin.RouterGroup, h *PreferencesHandler) {
+	preferences := r.Group("/preferences/:key")
+	preferences.GET("", h.List)
+	preferences.POST("", h.Create)
+}
+`)
+
+	writeTestFile(t, handlerFile, `package api
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+type PreferencesHandler struct {
+	service *PreferencesService
+}
+
+func (h *PreferencesHandler) Create(c *gin.Context) {
+	c.JSON(http.StatusCreated, StatusResponse{Status: "OK"})
+}
+
+func (h *PreferencesHandler) List(c *gin.Context) {
+	res, err := h.service.List()
+	if err != nil {
+		return
+	}
+
+	c.JSON(http.StatusOK, res)
+}
+`)
+
+	writeTestFile(t, serviceFile, `package api
+
+import "example.com/app/dto"
+
+type PreferencesService struct{}
+
+type StatusResponse struct {
+	Status string `+"`json:\"status\"`"+`
+}
+
+func (s *PreferencesService) List() ([]*dto.PreferencesResponse, error) {
+	response := make([]*dto.PreferencesResponse, 0, 1)
+	response = append(response, &dto.PreferencesResponse{Name: "email"})
+	return response, nil
+}
+`)
+
+	writeTestFile(t, dtoFile, `package dto
+
+type PreferencesResponse struct {
+	Name string `+"`json:\"name\"`"+`
+}
+`)
+
+	parsed, err := ParseFile(routerFile, ParseOptions{
+		ProjectRoot: root,
+		ModulePath:  "example.com/app",
+	})
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	getRoute := routeByMethod(parsed.Routes, "GET")
+	if getRoute == nil {
+		t.Fatal("GET route not found")
+	}
+
+	if got, want := getRoute.Response.StatusCode, "200"; got != want {
+		t.Fatalf("expected GET response status %q, got %q", want, got)
+	}
+	if got, want := getRoute.Response.TypeName, "[]*dto.PreferencesResponse"; got != want {
+		t.Fatalf("expected GET response type %q, got %q", want, got)
+	}
+
+	postRoute := routeByMethod(parsed.Routes, "POST")
+	if postRoute == nil {
+		t.Fatal("POST route not found")
+	}
+
+	if got, want := postRoute.Response.StatusCode, "201"; got != want {
+		t.Fatalf("expected POST response status %q, got %q", want, got)
+	}
+	if got, want := postRoute.Response.TypeName, "StatusResponse"; got != want {
+		t.Fatalf("expected POST response type %q, got %q", want, got)
+	}
+
+	if parsed.Schemas["dto.PreferencesResponse"] == nil {
+		t.Fatal("dto.PreferencesResponse schema not found")
+	}
+	if parsed.Schemas["StatusResponse"] == nil {
+		t.Fatal("StatusResponse schema not found")
+	}
+}
+
+func TestParseFileExtractsGenericResponseBodyFromServiceCall(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	apiDir := filepath.Join(root, "api")
+	modelsDir := filepath.Join(root, "models")
+
+	if err := os.MkdirAll(apiDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(apiDir) error = %v", err)
+	}
+	if err := os.MkdirAll(modelsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(modelsDir) error = %v", err)
+	}
+
+	routerFile := filepath.Join(apiDir, "router.go")
+	handlerFile := filepath.Join(apiDir, "handler.go")
+	dbFile := filepath.Join(apiDir, "db.go")
+	modelsFile := filepath.Join(modelsDir, "models.go")
+
+	writeTestFile(t, routerFile, `package api
+
+import "github.com/gin-gonic/gin"
+
+func SetupRoutes(r *gin.RouterGroup, a *Api) {
+	users := r.Group("/users")
+	users.GET("/subusers", a.fetchAllIspSubUsers)
+}
+`)
+
+	writeTestFile(t, handlerFile, `package api
+
+import (
+	"github.com/gin-gonic/gin"
+	"example.com/app/models"
+)
+
+type Api struct {
+	db *Postgres
+}
+
+func (a *Api) fetchAllIspSubUsers(c *gin.Context) {
+	ispUsers, ispUsersErr := a.db.FetchAllIspUsers(10, 1, "")
+	if ispUsersErr != nil {
+		c.JSON(500, &models.ApiErrorResponse{})
+		return
+	}
+
+	c.JSON(200, ispUsers)
+}
+`)
+
+	writeTestFile(t, dbFile, `package api
+
+import "example.com/app/models"
+
+type Postgres struct{}
+
+func (p *Postgres) FetchAllIspUsers(pageSize, pageNumber int, filter string) (*models.PaginatedResponse[models.IspUserAdminResponse], error) {
+	return &models.PaginatedResponse[models.IspUserAdminResponse]{}, nil
+}
+`)
+
+	writeTestFile(t, modelsFile, `package models
+
+type ApiErrorResponse struct {
+	Message string `+"`json:\"message\"`"+`
+}
+
+type PaginatedResponse[T any] struct {
+	Data       []T `+"`json:\"data\"`"+`
+	TotalPages int `+"`json:\"total_pages\"`"+`
+	Page       int `+"`json:\"page\"`"+`
+}
+
+type IspUserAdminResponse struct {
+	Username string `+"`json:\"username\"`"+`
+}
+`)
+
+	parsed, err := ParseFile(routerFile, ParseOptions{
+		ProjectRoot: root,
+		ModulePath:  "example.com/app",
+	})
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	getRoute := routeByMethod(parsed.Routes, "GET")
+	if getRoute == nil {
+		t.Fatal("GET route not found")
+	}
+
+	if got, want := getRoute.Response.TypeName, "models.PaginatedResponse[models.IspUserAdminResponse]"; got != want {
+		t.Fatalf("expected response type %q, got %q", want, got)
+	}
+
+	schema := parsed.Schemas["models.PaginatedResponse[models.IspUserAdminResponse]"]
+	if schema == nil {
+		t.Fatal("generic paginated schema not found")
+	}
+
+	data := schema.Properties["data"]
+	if data == nil || data.Type != "array" || data.Items == nil || data.Items.Ref != "#/components/schemas/models.IspUserAdminResponse" {
+		t.Fatalf("expected data field to resolve generic item type, got %#v", data)
+	}
+}
+
+func TestParseFileBuildsInlineSchemaForExternalCompositeLiteralResponse(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	apiDir := filepath.Join(root, "api")
+
+	if err := os.MkdirAll(apiDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(apiDir) error = %v", err)
+	}
+
+	routerFile := filepath.Join(apiDir, "router.go")
+	handlerFile := filepath.Join(apiDir, "handler.go")
+
+	writeTestFile(t, routerFile, `package api
+
+import "github.com/gin-gonic/gin"
+
+func SetupRoutes(r *gin.RouterGroup, h *PreferencesHandler) {
+	preferences := r.Group("/preferences/:key")
+	preferences.POST("", h.Create)
+}
+`)
+
+	writeTestFile(t, handlerFile, `package api
+
+import (
+	"net/http"
+
+	"example.com/external/httpx"
+	"github.com/gin-gonic/gin"
+)
+
+type PreferencesHandler struct{}
+
+func (h *PreferencesHandler) Create(c *gin.Context) {
+	c.JSON(http.StatusCreated, httpx.StatusResponse{Status: "OK"})
+}
+`)
+
+	parsed, err := ParseFile(routerFile, ParseOptions{
+		ProjectRoot: root,
+		ModulePath:  "example.com/app",
+	})
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	postRoute := routeByMethod(parsed.Routes, "POST")
+	if postRoute == nil {
+		t.Fatal("POST route not found")
+	}
+
+	if got, want := postRoute.Response.TypeName, "httpx.StatusResponse"; got != want {
+		t.Fatalf("expected response type %q, got %q", want, got)
+	}
+	if postRoute.Response.Schema == nil {
+		t.Fatal("expected inline schema for external composite literal")
+	}
+	if postRoute.Response.Schema.Properties["Status"] == nil || postRoute.Response.Schema.Properties["Status"].Type != "string" {
+		t.Fatalf("expected inline schema to include Status string, got %#v", postRoute.Response.Schema)
 	}
 }
 

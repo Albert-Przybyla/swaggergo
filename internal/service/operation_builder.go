@@ -8,20 +8,24 @@ import (
 	ginparser "github.com/Albert-Przybyla/swaggergo/internal/parser/gin"
 )
 
-func buildOperation(route ginparser.Route, fullPath string, tags []config.TagConfig, defaultSecurity []string) *generator.Operation {
-	opID := route.Handler
-	if opID == "" {
-		opID = route.Method + "_" + strings.ReplaceAll(fullPath, "/", "_")
-	}
-
+func buildOperation(route ginparser.Route, fullPath string, tags []config.TagConfig, defaultSecurity []string, knownSchemas map[string]*ginparser.Schema) *generator.Operation {
 	op := &generator.Operation{
-		OperationID: opID,
+		OperationID: route.Method + "_" + strings.ReplaceAll(fullPath, "/", "_"),
 		Summary:     route.Summary,
 		Description: route.Description,
 		Tags:        buildOperationTags(route, fullPath, tags),
 		Responses: map[string]generator.Response{
 			"200": {Description: "OK"},
 		},
+	}
+
+	statusCode := route.Response.StatusCode
+	if statusCode == "" {
+		statusCode = "200"
+	}
+	if statusCode != "200" {
+		delete(op.Responses, "200")
+		op.Responses[statusCode] = generator.Response{Description: defaultResponseDescription(statusCode)}
 	}
 
 	if security := resolveOperationSecurity(route, fullPath, tags, defaultSecurity); security != nil {
@@ -37,19 +41,130 @@ func buildOperation(route ginparser.Route, fullPath string, tags []config.TagCon
 	}
 
 	if route.BodyType != "" {
+		requestSchema := schemaForType(route.BodyType, knownSchemas)
 		op.RequestBody = &generator.RequestBody{
 			Required: true,
 			Content: map[string]generator.MediaType{
 				"application/json": {
-					Schema: &generator.Schema{
-						Ref: "#/components/schemas/" + route.BodyType,
-					},
+					Schema: requestSchema,
+				},
+			},
+		}
+	}
+
+	if route.Response.TypeName != "" {
+		var schema *generator.Schema
+		if route.Response.Schema != nil {
+			schema = convertParsedSchema(route.Response.Schema)
+		} else {
+			schema = schemaForType(route.Response.TypeName, knownSchemas)
+		}
+		op.Responses[statusCode] = generator.Response{
+			Description: defaultResponseDescription(statusCode),
+			Content: map[string]generator.MediaType{
+				"application/json": {
+					Schema: schema,
+				},
+			},
+		}
+	} else if route.Response.Schema != nil {
+		op.Responses[statusCode] = generator.Response{
+			Description: defaultResponseDescription(statusCode),
+			Content: map[string]generator.MediaType{
+				"application/json": {
+					Schema: convertParsedSchema(route.Response.Schema),
 				},
 			},
 		}
 	}
 
 	return op
+}
+
+func schemaForType(typeName string, knownSchemas map[string]*ginparser.Schema) *generator.Schema {
+	typeName = strings.TrimSpace(typeName)
+	if typeName == "" {
+		return &generator.Schema{Type: "object"}
+	}
+
+	if strings.HasPrefix(typeName, "[]") {
+		return &generator.Schema{
+			Type:  "array",
+			Items: schemaForType(strings.TrimPrefix(typeName, "[]"), knownSchemas),
+		}
+	}
+
+	typeName = strings.TrimPrefix(typeName, "*")
+	if builtin, ok := ginparser.BuiltinSchemaForType(typeName); ok {
+		return convertParsedSchema(builtin)
+	}
+	if hasKnownSchema(typeName, knownSchemas) {
+		return &generator.Schema{
+			Ref: componentSchemaRef(typeName),
+		}
+	}
+	return &generator.Schema{Type: "object"}
+}
+
+func hasKnownSchema(typeName string, knownSchemas map[string]*ginparser.Schema) bool {
+	if len(knownSchemas) == 0 {
+		return false
+	}
+	if _, ok := knownSchemas[typeName]; ok {
+		return true
+	}
+	normalized := ginparser.NormalizeSchemaTypeName(typeName)
+	if normalized == "" {
+		return false
+	}
+	_, ok := knownSchemas[normalized]
+	return ok
+}
+
+func schemaRefForType(typeName string) *generator.Schema {
+	typeName = strings.TrimSpace(typeName)
+	if typeName == "" {
+		return nil
+	}
+
+	if strings.HasPrefix(typeName, "[]") {
+		return &generator.Schema{
+			Type:  "array",
+			Items: schemaRefForType(strings.TrimPrefix(typeName, "[]")),
+		}
+	}
+
+	typeName = strings.TrimPrefix(typeName, "*")
+	return &generator.Schema{
+		Ref: componentSchemaRef(typeName),
+	}
+}
+
+func defaultResponseDescription(statusCode string) string {
+	switch statusCode {
+	case "201":
+		return "Created"
+	case "202":
+		return "Accepted"
+	case "204":
+		return "No Content"
+	case "400":
+		return "Bad Request"
+	case "401":
+		return "Unauthorized"
+	case "403":
+		return "Forbidden"
+	case "404":
+		return "Not Found"
+	case "409":
+		return "Conflict"
+	case "422":
+		return "Unprocessable Entity"
+	case "500":
+		return "Internal Server Error"
+	default:
+		return "OK"
+	}
 }
 
 func resolveOperationSecurity(route ginparser.Route, fullPath string, tags []config.TagConfig, defaultSecurity []string) *[]generator.SecurityRequirement {

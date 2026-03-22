@@ -38,6 +38,7 @@ type functionInfo struct {
 type structInfo struct {
 	key        string
 	name       string
+	typeParams []string
 	file       *fileInfo
 	structType *ast.StructType
 	doc        *ast.CommentGroup
@@ -246,11 +247,27 @@ func indexStructDecls(ctx *packageContext, fileInfo *fileInfo, gen *ast.GenDecl,
 		ctx.structs[key] = &structInfo{
 			key:        key,
 			name:       typeSpec.Name.Name,
+			typeParams: extractTypeParams(typeSpec),
 			file:       fileInfo,
 			structType: structType,
 			doc:        doc,
 		}
 	}
+}
+
+func extractTypeParams(typeSpec *ast.TypeSpec) []string {
+	if typeSpec == nil || typeSpec.TypeParams == nil {
+		return nil
+	}
+
+	var out []string
+	for _, field := range typeSpec.TypeParams.List {
+		for _, name := range field.Names {
+			out = append(out, name.Name)
+		}
+	}
+
+	return out
 }
 
 func typeKeyForFile(fileInfo *fileInfo, typeName string, localPackage bool) string {

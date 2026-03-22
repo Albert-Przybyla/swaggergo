@@ -50,6 +50,10 @@ func TestBuildRouterSpecIncludesBodyAndQueryParams(t *testing.T) {
 						{Name: "page", Type: "integer", Format: "int64", Required: true},
 						{Name: "active", Type: "boolean"},
 					},
+					Response: ginparser.RouteResponse{
+						StatusCode: "200",
+						TypeName:   "[]UserListResponse",
+					},
 				},
 				{
 					Method:   "POST",
@@ -57,6 +61,10 @@ func TestBuildRouterSpecIncludesBodyAndQueryParams(t *testing.T) {
 					Path:     "",
 					Handler:  "CreateUser",
 					BodyType: "CreateUserRequest",
+					Response: ginparser.RouteResponse{
+						StatusCode: "201",
+						TypeName:   "CreateUserResponse",
+					},
 				},
 			},
 			Schemas: map[string]*ginparser.Schema{
@@ -70,6 +78,12 @@ func TestBuildRouterSpecIncludesBodyAndQueryParams(t *testing.T) {
 						},
 					},
 					Required: []string{"name"},
+				},
+				"UserListResponse": {
+					Type: "object",
+				},
+				"CreateUserResponse": {
+					Type: "object",
 				},
 			},
 		},
@@ -91,6 +105,10 @@ func TestBuildRouterSpecIncludesBodyAndQueryParams(t *testing.T) {
 	if got, want := getOp.Description, "Returns users with filters."; got != want {
 		t.Fatalf("expected description %q, got %q", want, got)
 	}
+	getSchema := getOp.Responses["200"].Content["application/json"].Schema
+	if getSchema == nil || getSchema.Type != "array" || getSchema.Items == nil || getSchema.Items.Ref != "#/components/schemas/UserListResponse" {
+		t.Fatalf("expected GET response schema ref, got %#v", getOp.Responses["200"])
+	}
 
 	if len(getOp.Tags) != 1 || getOp.Tags[0] != "users" {
 		t.Fatalf("expected configured tag to be applied, got %#v", getOp.Tags)
@@ -108,6 +126,12 @@ func TestBuildRouterSpecIncludesBodyAndQueryParams(t *testing.T) {
 	ref := postOp.RequestBody.Content["application/json"].Schema.Ref
 	if ref != "#/components/schemas/CreateUserRequest" {
 		t.Fatalf("unexpected request body ref: %s", ref)
+	}
+	if _, exists := postOp.Responses["200"]; exists {
+		t.Fatalf("expected default 200 response to be replaced, got %#v", postOp.Responses)
+	}
+	if postOp.Responses["201"].Content["application/json"].Schema.Ref != "#/components/schemas/CreateUserResponse" {
+		t.Fatalf("unexpected POST response ref: %#v", postOp.Responses["201"])
 	}
 
 	if spec.Components.Schemas["CreateUserRequest"] == nil {
@@ -219,5 +243,131 @@ func TestBuildRouterSpecAllowsSecurityOverrideAndNoAuth(t *testing.T) {
 
 	if !strings.Contains(string(out), "security: []") {
 		t.Fatalf("expected serialized spec to contain explicit empty security array, got:\n%s", string(out))
+	}
+}
+
+func TestBuildRouterSpecSupportsGenericResponseSchemaRefs(t *testing.T) {
+	t.Parallel()
+
+	spec := buildRouterSpec(
+		&config.Config{
+			Info: config.InfoConfig{
+				Title:   "API",
+				Version: "1.0.0",
+			},
+		},
+		config.RouterConfig{},
+		&ginparser.ParsedRouter{
+			Routes: []ginparser.Route{
+				{
+					Method:  "GET",
+					Group:   "/users",
+					Path:    "",
+					Handler: "ListUsers",
+					Response: ginparser.RouteResponse{
+						StatusCode: "200",
+						TypeName:   "*models.PaginatedResponse[models.IspUserAdminResponse]",
+					},
+				},
+			},
+			Schemas: map[string]*ginparser.Schema{
+				"models.PaginatedResponse[models.IspUserAdminResponse]": {
+					Type: "object",
+				},
+			},
+		},
+	)
+
+	getOp := spec.Paths["/users"].Get
+	if getOp == nil {
+		t.Fatal("GET operation not generated")
+	}
+
+	ref := getOp.Responses["200"].Content["application/json"].Schema.Ref
+	if ref != "#/components/schemas/models.PaginatedResponse_models.IspUserAdminResponse" {
+		t.Fatalf("unexpected generic response schema ref: %s", ref)
+	}
+}
+
+func TestBuildRouterSpecUsesInlineResponseSchemaWhenComponentIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	spec := buildRouterSpec(
+		&config.Config{
+			Info: config.InfoConfig{
+				Title:   "API",
+				Version: "1.0.0",
+			},
+		},
+		config.RouterConfig{},
+		&ginparser.ParsedRouter{
+			Routes: []ginparser.Route{
+				{
+					Method:  "POST",
+					Group:   "/preferences",
+					Path:    "",
+					Handler: "Create",
+					Response: ginparser.RouteResponse{
+						StatusCode: "201",
+						TypeName:   "httpx.StatusResponse",
+						Schema: &ginparser.Schema{
+							Type: "object",
+							Properties: map[string]*ginparser.Schema{
+								"Status": {Type: "string"},
+							},
+							Required: []string{"Status"},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	postOp := spec.Paths["/preferences"].Post
+	if postOp == nil {
+		t.Fatal("POST operation not generated")
+	}
+
+	schema := postOp.Responses["201"].Content["application/json"].Schema
+	if schema == nil || schema.Type != "object" || schema.Properties["Status"] == nil || schema.Properties["Status"].Type != "string" {
+		t.Fatalf("expected inline response schema, got %#v", schema)
+	}
+}
+
+func TestBuildRouterSpecFallsBackWhenResponseComponentIsMissing(t *testing.T) {
+	t.Parallel()
+
+	spec := buildRouterSpec(
+		&config.Config{
+			Info: config.InfoConfig{
+				Title:   "API",
+				Version: "1.0.0",
+			},
+		},
+		config.RouterConfig{},
+		&ginparser.ParsedRouter{
+			Routes: []ginparser.Route{
+				{
+					Method:  "GET",
+					Group:   "/preferences",
+					Path:    "",
+					Handler: "List",
+					Response: ginparser.RouteResponse{
+						StatusCode: "200",
+						TypeName:   "httpx.StatusResponse",
+					},
+				},
+			},
+		},
+	)
+
+	getOp := spec.Paths["/preferences"].Get
+	if getOp == nil {
+		t.Fatal("GET operation not generated")
+	}
+
+	schema := getOp.Responses["200"].Content["application/json"].Schema
+	if schema == nil || schema.Ref != "" || schema.Type != "object" {
+		t.Fatalf("expected object fallback instead of dangling ref, got %#v", schema)
 	}
 }
